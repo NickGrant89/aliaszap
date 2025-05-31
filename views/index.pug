@@ -1,0 +1,31 @@
+html
+  head
+    title AliasZap - Protect Your Inbox
+    link(href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css', rel='stylesheet')
+  body
+    nav.navbar.navbar-expand-lg.navbar-light.bg-light
+      .container
+        a.navbar-brand(href='/') AliasZap
+        button.navbar-toggler(type='button', data-bs-toggle='collapse', data-bs-target='#navbarNav', aria-controls='navbarNav', aria-expanded='false', aria-label='Toggle navigation')
+          span.navbar-toggler-icon
+        #navbarNav.collapse.navbar-collapse
+          ul.navbar-nav.ms-auto
+            if user
+              li.nav-item
+                a.nav-link(href='/dashboard') Dashboard
+              li.nav-item
+                a.nav-link(href='/subscribe') Upgrade
+              li.nav-item
+                a.nav-link(href='/logout') Logout
+            else
+              li.nav-item
+                a.nav-link(href='/login') Login
+              li.nav-item
+                a.nav-link(href='/signup') Signup
+    .container.mt-5
+      .row
+        .col-md-8.offset-md-2.text-center
+          h1.display-4 Protect Your Inbox
+          p.lead Create disposable email aliases to keep your real email safe from spam and breaches.
+          a.btn.btn-primary.btn-lg.mt-3(href=user ? '/dashboard' : '/signup') #{user ? 'Go to Dashboard' : 'Get Started'}
+    script(src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js')

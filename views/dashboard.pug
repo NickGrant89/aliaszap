@@ -1,0 +1,64 @@
+html
+  head
+    title Dashboard - AliasZap
+    link(href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css', rel='stylesheet')
+  body
+    nav.navbar.navbar-expand-lg.navbar-light.bg-light
+      .container
+        a.navbar-brand(href='/') AliasZap
+        button.navbar-toggler(type='button', data-bs-toggle='collapse', data-bs-target='#navbarNav')
+          span.navbar-toggler-icon
+        #navbarNav.collapse.navbar-collapse
+          ul.navbar-nav.ms-auto
+            li.nav-item
+              a.nav-link.active(href='/dashboard') Dashboard
+            li.nav-item
+              a.nav-link(href='/subscribe') Upgrade
+            li.nav-item
+              a.nav-link(href='/logout') Logout
+    .container.mt-5
+      .row
+        .col-md-10.offset-md-1
+          h2.mb-4 Your Aliases
+          if error
+            .alert.alert-danger= error
+          if success
+            .alert.alert-success= success
+          p Plan: #{user.plan === 'free' ? 'Free (5 aliases max)' : 'Basic (Unlimited)'}
+          form(method='POST', action='/create-alias')
+            input(type='hidden', name='_csrf', value=csrfToken)
+            .input-group.mb-3
+              input.form-control(type='text', name='label', placeholder='Label (e.g., Amazon)')
+              button.btn.btn-primary(type='submit', id='create-alias-btn') Create New Alias
+          if aliases.length
+            .table-responsive
+              table.table.table-striped
+                thead
+                  tr
+                    th Alias
+                    th Label
+                    th Created
+                    th Status
+                    th Spam
+                    th Action
+                tbody
+                  each alias in aliases
+                    tr
+                      td= alias.alias
+                      td= alias.label || '-'
+                      td= alias.createdAt.toDateString()
+                      td= alias.active ? 'Active' : 'Inactive'
+                      td
+                        if alias.active
+                          form(action=`/toggle-spam/${alias._id}`, method='POST', style='display:inline')
+                            input(type='hidden', name='_csrf', value=csrfToken)
+                            button.btn.btn-warning.btn-sm(type='submit') #{alias.blockSpam ? 'Unblock' : 'Block'} Spam
+                      td
+                        if alias.active
+                          form(action=`/delete-alias/${alias._id}`, method='POST', style='display:inline')
+                            input(type='hidden', name='_csrf', value=csrfToken)
+                            button.btn.btn-danger.btn-sm(type='submit', data-alias-id=alias._id) Delete
+          else
+            p.text-muted No aliases yet. Click "Create New Alias" to start!
+    script(src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js')
+    script(src='/js/dashboard.js')
