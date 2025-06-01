@@ -7,9 +7,15 @@ const AliasSchema = new mongoose.Schema({
   active: { type: Boolean, default: true },
   label: { type: String, default: '' },
   blockSpam: { type: Boolean, default: false },
-  emailCount: { type: Number, default: 0 }, // New: Track emails received
-  spamCount: { type: Number, default: 0 }, // New: Track spam emails
+  emailCount: { type: Number, default: 0 },
+  spamCount: { type: Number, default: 0 },
+  expiresAt: { type: Date, default: null },
   createdAt: { type: Date, default: Date.now }
 });
+
+// Add indexes
+AliasSchema.index({ userId: 1 });
+AliasSchema.index({ alias: 1 });
+AliasSchema.index({ expiresAt: 1 });
 
 module.exports = mongoose.model('Alias', AliasSchema);
