@@ -2,6 +2,7 @@ html
   head
     title Dashboard - AliasZap
     link(href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css', rel='stylesheet')
+    link(href='/css/styles.css', rel='stylesheet')
   body
     nav.navbar.navbar-expand-lg.navbar-light.bg-light
       .container
@@ -16,6 +17,8 @@ html
               a.nav-link(href='/subscribe') Upgrade
             li.nav-item
               a.nav-link(href='/logout') Logout
+            li.nav-item
+              button#darkModeToggle.btn.btn-link.nav-link Dark Mode
     .container.mt-5
       .row
         .col-md-10.offset-md-1
@@ -28,37 +31,85 @@ html
           form(method='POST', action='/create-alias')
             input(type='hidden', name='_csrf', value=csrfToken)
             .input-group.mb-3
-              input.form-control(type='text', name='label', placeholder='Label (e.g., Amazon)')
+              input.form-control(type='text', name='label', placeholder='Label (e.g., Amazon)', maxlength='50')
+              if user.plan !== 'free'
+                input.form-control(type='text', name='customAlias', placeholder='Custom Alias (e.g., amazon)')
+              else
+                select.form-control(name='aliasLength')
+                  option(value='short') Short Alias (e.g., shop12@aliaszap.com)
+                  option(value='long') Long Alias (e.g., randomxyz123abc@aliaszap.com)
+              select.form-control(name='expiresIn')
+                option(value='never') Never Expires
+                option(value='1day') 1 Day
+                option(value='7days') 7 Days
+                option(value='30days') 30 Days
               button.btn.btn-primary(type='submit', id='create-alias-btn') Create New Alias
-          if aliases.length
-            .table-responsive
-              table.table.table-striped
-                thead
-                  tr
-                    th Alias
-                    th Label
-                    th Created
-                    th Status
-                    th Spam
-                    th Action
-                tbody
-                  each alias in aliases
-                    tr
-                      td= alias.alias
-                      td= alias.label || '-'
-                      td= alias.createdAt.toDateString()
-                      td= alias.active ? 'Active' : 'Inactive'
-                      td
-                        if alias.active
-                          form(action=`/toggle-spam/${alias._id}`, method='POST', style='display:inline')
-                            input(type='hidden', name='_csrf', value=csrfToken)
-                            button.btn.btn-warning.btn-sm(type='submit') #{alias.blockSpam ? 'Unblock' : 'Block'} Spam
-                      td
-                        if alias.active
-                          form(action=`/delete-alias/${alias._id}`, method='POST', style='display:inline')
-                            input(type='hidden', name='_csrf', value=csrfToken)
-                            button.btn.btn-danger.btn-sm(type='submit', data-alias-id=alias._id) Delete
-          else
-            p.text-muted No aliases yet. Click "Create New Alias" to start!
+            small.text-muted #{user.plan !== 'free' ? 'Enter a custom alias or leave blank for a random one' : 'Generate aliases based on your preference'}
+          ul.nav.nav-tabs.mt-4
+            li.nav-item
+              a.nav-link.active(data-bs-toggle='tab', href='#active') Active Aliases
+            li.nav-item
+              a.nav-link(data-bs-toggle='tab', href='#inactive') Inactive Aliases
+          .tab-content.mt-3
+            #active.tab-pane.fade.show.active
+              if activeAliases.length
+                .table-responsive
+                  table.table.table-striped
+                    thead
+                      tr
+                        th Alias
+                        th Label
+                        th Created
+                        th Expires
+                        th Emails Received
+                        th Spam Detected
+                        th Status
+                        th Spam
+                        th Reply
+                        th Action
+                    tbody
+                      each alias in activeAliases
+                        tr
+                          td= alias.alias
+                          td= alias.label || '-'
+                          td= alias.createdAt.toDateString()
+                          td= alias.expiresAt ? alias.expiresAt.toDateString() : 'Never'
+                          td= alias.emailCount
+                          td= alias.spamCount
+                          td= alias.active ? 'Active' : 'Inactive'
+                          td
+                            if alias.active
+                              form(action=`/toggle-spam/${alias._id}`, method='POST', style='display:inline')
+                                input(type='hidden', name='_csrf', value=csrfToken)
+                                button.btn.btn-warning.btn-sm(type='submit') #{alias.blockSpam ? 'Unblock' : 'Block'} Spam
+                          td
+                            if alias.active && user.plan !== 'free'
+                              a.btn.btn-info.btn-sm(href=`/reply/${alias._id}`) Reply
+                          td
+                            if alias.active
+                              form(action=`/delete-alias/${alias._id}`, method='POST', style='display:inline')
+                                input(type='hidden', name='_csrf', value=csrfToken)
+                                button.btn.btn-danger.btn-sm(type='submit', data-alias-id=alias._id) Delete
+              else
+                p.text-muted No active aliases yet. Click "Create New Alias" to start!
+            #inactive.tab-pane.fade
+              if inactiveAliases.length
+                .table-responsive
+                  table.table.table-striped
+                    thead
+                      tr
+                        th Alias
+                        th Label
+                        th Created
+                        th Status
+                    tbody
+                      each alias in inactiveAliases
+                        tr
+                          td= alias.alias
+                          td= alias.label || '-'
+                          td= alias.createdAt.toDateString()
+                          td= alias.active ? 'Active' : 'Inactive'
+              else
+                p.text-muted No inactive aliases yet. Delete an alias to see it here!
     script(src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js')
     script(src='/js/dashboard.js')

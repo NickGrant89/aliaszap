@@ -5,8 +5,10 @@ const AliasSchema = new mongoose.Schema({
   alias: { type: String, required: true, unique: true },
   forwardTo: { type: String, required: true },
   active: { type: Boolean, default: true },
-  label: { type: String, default: '' }, // New: User-defined label
-  blockSpam: { type: Boolean, default: false }, // New: Spam blocking toggle
+  label: { type: String, default: '' },
+  blockSpam: { type: Boolean, default: false },
+  emailCount: { type: Number, default: 0 }, // New: Track emails received
+  spamCount: { type: Number, default: 0 }, // New: Track spam emails
   createdAt: { type: Date, default: Date.now }
 });
 
