@@ -3,6 +3,9 @@ html
     title Dashboard - AliasZap
     link(href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css', rel='stylesheet')
     link(href='/css/styles.css', rel='stylesheet')
+    style.
+      .tab-pane { display: none; }
+      .tab-pane.active { display: block; }
   body
     nav.navbar.navbar-expand-lg.navbar-light.bg-light
       .container
@@ -45,14 +48,14 @@ html
                 option(value='30days') 30 Days
               button.btn.btn-primary(type='submit', id='create-alias-btn') Create New Alias
             small.text-muted #{user.plan !== 'free' ? 'Enter a custom alias or leave blank for a random one' : 'Generate aliases based on your preference'}
-          ul.nav.nav-tabs.mt-4
+          ul.nav.nav-tabs.mt-4#dashboardTabs
             li.nav-item
               a.nav-link.active(data-bs-toggle='tab', href='#active') Active Aliases
             li.nav-item
               a.nav-link(data-bs-toggle='tab', href='#inactive') Inactive Aliases
           .tab-content.mt-3
-            #active.tab-pane.fade.show.active
-              if activeAliases.length
+            #active.tab-pane.active
+              if activeAliases && activeAliases.length
                 .table-responsive
                   table.table.table-striped
                     thead
@@ -69,11 +72,11 @@ html
                         th Action
                     tbody
                       each alias in activeAliases
-                        tr
+                        tr(data-alias-id=alias._id)
                           td= alias.alias
                           td= alias.label || '-'
-                          td= alias.createdAt.toDateString()
-                          td= alias.expiresAt ? alias.expiresAt.toDateString() : 'Never'
+                          td= alias.createdAt ? new Date(alias.createdAt).toDateString() : 'N/A'
+                          td= alias.expiresAt ? new Date(alias.expiresAt).toDateString() : 'Never'
                           td= alias.emailCount
                           td= alias.spamCount
                           td= alias.active ? 'Active' : 'Inactive'
@@ -87,13 +90,14 @@ html
                               a.btn.btn-info.btn-sm(href=`/reply/${alias._id}`) Reply
                           td
                             if alias.active
-                              form(action=`/delete-alias/${alias._id}`, method='POST', style='display:inline')
+                              form(id=`delete-form-${alias._id}`, action=`/delete-alias/${alias._id}`, method='POST', style='display:inline')
                                 input(type='hidden', name='_csrf', value=csrfToken)
-                                button.btn.btn-danger.btn-sm(type='submit', data-alias-id=alias._id) Delete
+                                button.btn.btn-danger.btn-sm(type='submit', data-delete-button=alias._id) Delete
               else
                 p.text-muted No active aliases yet. Click "Create New Alias" to start!
-            #inactive.tab-pane.fade
-              if inactiveAliases.length
+            #inactive.tab-pane
+              p Debug: Inactive Aliases Length: #{inactiveAliases.length}
+              if inactiveAliases && inactiveAliases.length > 0
                 .table-responsive
                   table.table.table-striped
                     thead
@@ -104,12 +108,12 @@ html
                         th Status
                     tbody
                       each alias in inactiveAliases
-                        tr
+                        tr(data-alias-id=alias._id)
                           td= alias.alias
                           td= alias.label || '-'
-                          td= alias.createdAt.toDateString()
+                          td= alias.createdAt ? new Date(alias.createdAt).toDateString() : 'N/A'
                           td= alias.active ? 'Active' : 'Inactive'
               else
                 p.text-muted No inactive aliases yet. Delete an alias to see it here!
-    script(src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js')
+    script(src='/js/bootstrap.bundle.min.js')
     script(src='/js/dashboard.js')
