@@ -1,0 +1,51 @@
+html
+  head
+    title Spam Settings - AliasZap
+    link(href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css', rel='stylesheet')
+    link(href='/css/styles.css', rel='stylesheet')
+  body
+    nav.navbar.navbar-expand-lg.navbar-light.bg-light
+      .container
+        a.navbar-brand(href='/') AliasZap
+        button.navbar-toggler(type='button', data-bs-toggle='collapse', data-bs-target='#navbarNav')
+          span.navbar-toggler-icon
+        #navbarNav.collapse.navbar-collapse
+          ul.navbar-nav.ms-auto
+            li.nav-item
+              a.nav-link(href='/dashboard') Dashboard
+            if user.plan !== 'free'
+              li.nav-item
+                a.nav-link(href='/custom-domains') Custom Domains
+            li.nav-item
+              a.nav-link(href='/subscribe') Upgrade
+            li.nav-item
+              a.nav-link(href='/logout') Logout
+            li.nav-item
+              button#darkModeToggle.btn.btn-link.nav-link Dark Mode
+    .container.mt-5
+      .row
+        .col-md-10.offset-md-1
+          h2.mb-4 Spam Settings for #{alias.alias}
+          if error
+            .alert.alert-danger= error
+          if success
+            .alert.alert-success= success
+          form(method='POST', action=`/spam-settings/${alias._id}`)
+            input(type='hidden', name='_csrf', value=csrfToken)
+            .mb-3
+              label.form-label
+                input(type='checkbox', name='blockSpam', checked=alias.blockSpam)
+                |  Block Spam
+              small.text-muted If enabled, emails flagged as spam will be blocked.
+            if user.plan !== 'free'
+              .mb-3
+                label.form-label
+                  input(type='checkbox', name='enableAdvancedSpamDetection', checked=alias.enableAdvancedSpamDetection)
+                  |  Enable Advanced Spam Detection
+                small.text-muted Detects spam using keyword-based filtering (Basic plan only).
+              .mb-3
+                label.form-label(for='blocklist') Custom Blocklist
+                textarea.form-control(name='blocklist', rows='3', placeholder='Enter email addresses or domains to block (comma-separated)') #{alias.spamBlocklist.join(', ')}
+                small.text-muted Enter email addresses or domains to block (e.g., spam@example.com, example.org).
+            button.btn.btn-primary(type='submit') Save Settings
+          a.btn.btn-secondary.mt-3(href='/dashboard') Back to Dashboard

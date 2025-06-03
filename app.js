@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const winston = require('winston');
 const cron = require('node-cron');
-const routes = require('./routes/index');
+const routes = require('./routes/index'); // Declare routes once here
 const User = require('./models/User');
 const Alias = require('./models/Alias');
 require('dotenv').config();
@@ -80,6 +80,9 @@ app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (re
   res.json({ received: true });
 });
 
+// Add /handle-email route before csurf middleware
+app.use('/handle-email', routes); // Use the same routes variable
+
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret',
   resave: false,
@@ -118,14 +121,19 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // Cron job for alias expiration
+logger.info('Scheduling cron job for alias expiration');
 cron.schedule('* * * * *', async () => {
   const now = new Date();
   try {
-    const expiredAliases = await Alias.find({ expiresAt: { $lte: now }, active: true }).lean();
+    const expiredAliases = await Alias.find({ 
+      expiresAt: { $lte: now, $ne: null }, 
+      active: true 
+    }).lean();
+    logger.info('Cron Job Running - Checking for expired aliases:', { timestamp: now.toISOString() });
     if (expiredAliases.length > 0) {
       const userIds = [...new Set(expiredAliases.map(alias => alias.userId.toString()))];
       await Alias.updateMany(
-        { expiresAt: { $lte: now }, active: true },
+        { expiresAt: { $lte: now, $ne: null }, active: true },
         { $set: { active: false } }
       );
       for (const userId of userIds) {
@@ -148,7 +156,7 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
   .catch(err => logger.error('MongoDB connection error:', err));
 
 // Routes
-app.use('/', routes);
+app.use('/', routes); // Use the same routes variable
 
 // Error handling
 app.use((err, req, res, next) => {

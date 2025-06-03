@@ -16,8 +16,13 @@ html
           ul.navbar-nav.ms-auto
             li.nav-item
               a.nav-link.active(href='/dashboard') Dashboard
+            if user.plan !== 'free'
+              li.nav-item
+                a.nav-link(href='/custom-domains') Custom Domains
             li.nav-item
               a.nav-link(href='/subscribe') Upgrade
+            li.nav-item
+              a.nav-link(href='/support') Support
             li.nav-item
               a.nav-link(href='/logout') Logout
             li.nav-item
@@ -85,9 +90,14 @@ html
                               form(action=`/toggle-spam/${alias._id}`, method='POST', style='display:inline')
                                 input(type='hidden', name='_csrf', value=csrfToken)
                                 button.btn.btn-warning.btn-sm(type='submit') #{alias.blockSpam ? 'Unblock' : 'Block'} Spam
+                              a.btn.btn-secondary.btn-sm.ml-2(href=`/spam-settings/${alias._id}`) Spam Settings
                           td
-                            if alias.active && user.plan !== 'free'
-                              a.btn.btn-info.btn-sm(href=`/reply/${alias._id}`) Reply
+                            if alias.active
+                              if user.plan !== 'free'
+                                a.btn.btn-info.btn-sm(href=`/reply/${alias._id}`) Reply
+                              else
+                                a.btn.btn-info.btn-sm(href='/subscribe') Upgrade
+                                small.text-muted.d-block Upgrade to reply using aliases.
                           td
                             if alias.active
                               form(id=`delete-form-${alias._id}`, action=`/delete-alias/${alias._id}`, method='POST', style='display:inline')

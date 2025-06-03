@@ -2,15 +2,19 @@ const mongoose = require('mongoose');
 
 const AliasSchema = new mongoose.Schema({
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  alias: { type: String, required: true, unique: true },
+  alias: { type: String, required: true },
   forwardTo: { type: String, required: true },
   active: { type: Boolean, default: true },
-  label: { type: String, default: '' },
-  blockSpam: { type: Boolean, default: false },
+  label: String,
+  expiresAt: Date,
   emailCount: { type: Number, default: 0 },
   spamCount: { type: Number, default: 0 },
-  expiresAt: { type: Date, default: null },
-  createdAt: { type: Date, default: Date.now }
+  blockSpam: { type: Boolean, default: false },
+  domain: { type: String, default: process.env.DOMAIN },
+  spamBlocklist: { type: [String], default: [] }, // Custom blocklist for senders/domains
+  enableAdvancedSpamDetection: { type: Boolean, default: false } // Toggle for keyword-based detection
+
+  
 });
 
 // Add indexes
