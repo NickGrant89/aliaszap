@@ -11,7 +11,12 @@ const crypto = require('crypto');
 const sanitizeHtml = require('sanitize-html');
 const winston = require('winston');
 
-AWS.config.update({ region: 'eu-west-2' });
+// Configure AWS credentials
+AWS.config.update({
+  region: 'eu-west-2',
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+});
 const ses = new AWS.SES();
 
 // Logger setup (for consistency, though already in app.js)
@@ -35,13 +40,17 @@ if (process.env.NODE_ENV !== 'production') {
 
 // Middleware
 const isAuthenticated = (req, res, next) => {
+  logger.info('Checking authentication:', { isAuthenticated: req.isAuthenticated(), user: req.user || 'No user' });
   if (req.isAuthenticated()) return next();
   res.redirect('/login');
 };
 
 const isAdmin = (req, res, next) => {
-  if (req.isAuthenticated() && req.user.isAdmin) return next();
-  res.status(403).render('error', { error: 'Access denied. Admin privileges required.' });
+  if (req.isAuthenticated() && req.user.isAdmin) {
+    return next();
+  }
+  logger.info('Non-Admin User Attempted to Access Admin Route, Redirecting to /support:', { userId: req.user ? req.user._id.toString() : 'Unauthenticated', url: req.url });
+  res.redirect('/support');
 };
 
 // Home
@@ -53,11 +62,32 @@ router.get('/', (req, res) => {
 router.get('/login', (req, res) => {
   res.render('login', { error: req.session.messages || null, csrfToken: req.csrfToken() });
 });
-router.post('/login', passport.authenticate('local', {
-  successRedirect: '/dashboard',
-  failureRedirect: '/login',
-  failureMessage: true
-}));
+// Login
+router.post('/login', (req, res, next) => {
+  passport.authenticate('local', (err, user, info) => {
+    if (err) {
+      logger.error('Login Error:', { message: err.message, stack: err.stack });
+      return next(err);
+    }
+    if (!user) {
+      return res.render('login', { error: info.message || 'Incorrect email or password.', csrfToken: req.csrfToken() });
+    }
+    req.login(user, (loginErr) => {
+      if (loginErr) {
+        logger.error('Login Session Error:', { message: loginErr.message, stack: loginErr.stack });
+        return next(loginErr);
+      }
+      // Redirect based on user role
+      if (user.isAdmin) {
+        logger.info('Admin User Logged In, Redirecting to /admin/support-tickets:', { userId: user._id.toString() });
+        return res.redirect('/admin/support-tickets');
+      } else {
+        logger.info('Regular User Logged In, Redirecting to /support:', { userId: user._id.toString() });
+        return res.redirect('/dashboard');
+      }
+    });
+  })(req, res, next);
+});
 
 // Signup
 router.get('/signup', (req, res) => {
@@ -644,9 +674,10 @@ router.post('/spam-settings/:id', isAuthenticated, async (req, res) => {
 router.get('/support', isAuthenticated, async (req, res) => {
   try {
     const tickets = await SupportTicket.find({ userId: req.user._id }).lean();
+    logger.info('Tickets fetched for support page:', { userId: req.user._id.toString(), tickets: tickets });
     res.render('support', { user: req.user, tickets, csrfToken: req.csrfToken() });
   } catch (err) {
-    logger.error('Support Page Error:', err);
+    logger.error('Support Page Error:', { message: err.message, stack: err.stack });
     res.render('support', { user: req.user, tickets: [], error: 'Failed to load support tickets.', csrfToken: req.csrfToken() });
   }
 });
@@ -672,13 +703,17 @@ router.post('/support', isAuthenticated, async (req, res) => {
     const ticket = new SupportTicket({
       userId: user._id,
       subject: sanitizedSubject,
-      message: sanitizedMessage,
-      priority: user.plan !== 'free' // Paid users get priority
+      messages: [{ sender: 'user', message: sanitizedMessage }],
+      priority: user.plan !== 'free'
     });
     await ticket.save();
     logger.info('Support Ticket Submitted:', { ticketId: ticket._id, userId: user._id.toString() });
 
-    // Send email notification to admin
+    if (!process.env.ADMIN_EMAIL) {
+      logger.error('Admin Email Not Configured:', { ticketId: ticket._id });
+      throw new Error('ADMIN_EMAIL environment variable is not set');
+    }
+
     const params = {
       Source: `support@aliaszap.com`,
       Destination: { ToAddresses: [process.env.ADMIN_EMAIL] },
@@ -702,25 +737,238 @@ router.post('/support', isAuthenticated, async (req, res) => {
       csrfToken: req.csrfToken()
     });
   } catch (err) {
-    logger.error('Submit Support Ticket Error:', err);
+    logger.error('Submit Support Ticket Error:', err.message, { stack: err.stack });
     const tickets = await SupportTicket.find({ userId: user._id }).lean();
     res.render('support', {
       user,
       tickets,
-      error: 'Failed to submit support ticket.',
+      error: 'Failed to submit support ticket: ' + err.message,
+      csrfToken: req.csrfToken()
+    });
+  }
+});
+
+// User Reply to Support Ticket
+router.post('/support/reply/:id', isAuthenticated, async (req, res) => {
+  const { user } = req;
+  const { message } = req.body;
+  try {
+    const sanitizedMessage = sanitizeHtml(message, { allowedTags: [], allowedAttributes: {} });
+    if (!sanitizedMessage) {
+      const tickets = await SupportTicket.find({ userId: user._id }).lean();
+      return res.render('support', {
+        user,
+        tickets,
+        error: 'Message is required.',
+        csrfToken: req.csrfToken()
+      });
+    }
+
+    const ticket = await SupportTicket.findOne({ _id: req.params.id, userId: user._id });
+    if (!ticket) {
+      const tickets = await SupportTicket.find({ userId: user._id }).lean();
+      return res.render('support', {
+        user,
+        tickets,
+        error: 'Ticket not found.',
+        csrfToken: req.csrfToken()
+      });
+    }
+
+    if (ticket.status === 'closed') {
+      const tickets = await SupportTicket.find({ userId: user._id }).lean();
+      return res.render('support', {
+        user,
+        tickets,
+        error: 'Cannot reply to a closed ticket.',
+        csrfToken: req.csrfToken()
+      });
+    }
+
+    ticket.messages.push({ sender: 'user', message: sanitizedMessage });
+    await ticket.save();
+    logger.info('User Replied to Support Ticket:', { ticketId: ticket._id, userId: user._id.toString() });
+
+    if (!process.env.ADMIN_EMAIL) {
+      logger.error('Admin Email Not Configured:', { ticketId: ticket._id });
+      throw new Error('ADMIN_EMAIL environment variable is not set');
+    }
+
+    const params = {
+      Source: `support@aliaszap.com`,
+      Destination: { ToAddresses: [process.env.ADMIN_EMAIL] },
+      Message: {
+        Subject: { Data: `New Reply to Support Ticket: ${ticket.subject}` },
+        Body: {
+          Text: {
+            Data: `User: ${user.email}\nTicket ID: ${ticket._id}\nSubject: ${ticket.subject}\nReply: ${sanitizedMessage}\nTimestamp: ${new Date().toISOString()}`
+          }
+        }
+      }
+    };
+    await ses.sendEmail(params).promise();
+    logger.info('Admin Notified of User Reply:', { ticketId: ticket._id, adminEmail: process.env.ADMIN_EMAIL });
+
+    const tickets = await SupportTicket.find({ userId: user._id }).lean();
+    res.render('support', {
+      user,
+      tickets,
+      success: 'Reply submitted successfully.',
+      csrfToken: req.csrfToken()
+    });
+  } catch (err) {
+    logger.error('User Reply to Support Ticket Error:', err.message, { stack: err.stack });
+    const tickets = await SupportTicket.find({ userId: user._id }).lean();
+    res.render('support', {
+      user,
+      tickets,
+      error: 'Failed to submit reply: ' + err.message,
       csrfToken: req.csrfToken()
     });
   }
 });
 
 // Admin Support Tickets Dashboard
+// Admin Support Tickets Dashboard
 router.get('/admin/support-tickets', isAuthenticated, isAdmin, async (req, res) => {
   try {
-    const tickets = await SupportTicket.find().populate('userId', 'email').lean();
+    // Fetch tickets and handle invalid userId references
+    const tickets = await SupportTicket.find().lean();
+    // Populate user emails manually
+    for (let ticket of tickets) {
+      if (ticket.userId) {
+        const user = await User.findById(ticket.userId).select('email').lean();
+        ticket.userId = user || { email: 'Unknown User' };
+      } else {
+        ticket.userId = { email: 'Unknown User' };
+      }
+    }
+    logger.info('Rendering admin/support-tickets with CSRF Token:', { token: req.csrfToken(), sessionID: req.sessionID });
     res.render('admin/support-tickets', { user: req.user, tickets, csrfToken: req.csrfToken() });
   } catch (err) {
-    logger.error('Admin Support Tickets Error:', err);
-    res.render('admin/support-tickets', { user: req.user, tickets: [], error: 'Failed to load support tickets.', csrfToken: req.csrfToken() });
+    logger.error('Admin Support Tickets Error:', { message: err.message, stack: err.stack });
+    res.render('admin/support-tickets', { user: req.user, tickets: [], error: 'Failed to load support tickets: ' + err.message, csrfToken: req.csrfToken() });
+  }
+});
+
+// Admin Respond to Support Ticket
+router.post('/admin/support-tickets/respond/:id', isAuthenticated, isAdmin, async (req, res) => {
+  logger.info('Processing Admin Support Ticket Response:', { ticketId: req.params.id, sessionID: req.sessionID, userId: req.user._id.toString(), formData: req.body });
+  const { response } = req.body;
+  try {
+    const sanitizedResponse = sanitizeHtml(response, { allowedTags: [], allowedAttributes: {} });
+    if (!sanitizedResponse) {
+      const tickets = await SupportTicket.find().lean();
+      for (let ticket of tickets) {
+        if (ticket.userId) {
+          const user = await User.findById(ticket.userId).select('email').lean();
+          ticket.userId = user || { email: 'Unknown User' };
+        } else {
+          ticket.userId = { email: 'Unknown User' };
+        }
+      }
+      logger.info('Rendering admin/support-tickets with CSRF Token (Error: Response Required):', { token: req.csrfToken(), sessionID: req.sessionID });
+      return res.render('admin/support-tickets', {
+        user: req.user,
+        tickets,
+        error: 'Response is required.',
+        csrfToken: req.csrfToken()
+      });
+    }
+
+    const ticket = await SupportTicket.findById(req.params.id).populate('userId', 'email');
+    if (!ticket) {
+      const tickets = await SupportTicket.find().lean();
+      for (let ticket of tickets) {
+        if (ticket.userId) {
+          const user = await User.findById(ticket.userId).select('email').lean();
+          ticket.userId = user || { email: 'Unknown User' };
+        } else {
+          ticket.userId = { email: 'Unknown User' };
+        }
+      }
+      logger.info('Rendering admin/support-tickets with CSRF Token (Error: Ticket Not Found):', { token: req.csrfToken(), sessionID: req.sessionID });
+      return res.render('admin/support-tickets', {
+        user: req.user,
+        tickets,
+        error: 'Ticket not found.',
+        csrfToken: req.csrfToken()
+      });
+    }
+
+    if (ticket.status === 'closed') {
+      const tickets = await SupportTicket.find().lean();
+      for (let ticket of tickets) {
+        if (ticket.userId) {
+          const user = await User.findById(ticket.userId).select('email').lean();
+          ticket.userId = user || { email: 'Unknown User' };
+        } else {
+          ticket.userId = { email: 'Unknown User' };
+        }
+      }
+      logger.info('Rendering admin/support-tickets with CSRF Token (Error: Cannot Respond to Closed Ticket):', { token: req.csrfToken(), sessionID: req.sessionID });
+      return res.render('admin/support-tickets', {
+        user: req.user,
+        tickets,
+        error: 'Cannot respond to a closed ticket.',
+        csrfToken: req.csrfToken()
+      });
+    }
+
+    ticket.messages.push({ sender: 'admin', message: sanitizedResponse });
+    await ticket.save();
+    logger.info('Admin Responded to Support Ticket:', { ticketId: ticket._id, userId: ticket.userId._id.toString() });
+
+    const userEmail = ticket.userId.email;
+    const params = {
+      Source: `support@aliaszap.com`,
+      Destination: { ToAddresses: [userEmail] },
+      Message: {
+        Subject: { Data: `Support Ticket Response: ${ticket.subject}` },
+        Body: {
+          Text: {
+            Data: `Ticket ID: ${ticket._id}\nSubject: ${ticket.subject}\nAdmin Response: ${sanitizedResponse}\nResponded At: ${new Date().toISOString()}\n\nYou can view this ticket at: http://localhost:3000/support`
+          }
+        }
+      }
+    };
+    await ses.sendEmail(params).promise();
+    logger.info('User Notified of Support Ticket Response:', { ticketId: ticket._id, userEmail });
+
+    const tickets = await SupportTicket.find().lean();
+    for (let ticket of tickets) {
+      if (ticket.userId) {
+        const user = await User.findById(ticket.userId).select('email').lean();
+        ticket.userId = user || { email: 'Unknown User' };
+      } else {
+        ticket.userId = { email: 'Unknown User' };
+      }
+    }
+    logger.info('Rendering admin/support-tickets with CSRF Token (Success):', { token: req.csrfToken(), sessionID: req.sessionID });
+    res.render('admin/support-tickets', {
+      user: req.user,
+      tickets,
+      success: 'Response submitted and user notified.',
+      csrfToken: req.csrfToken()
+    });
+  } catch (err) {
+    logger.error('Respond to Support Ticket Error:', { message: err.message, stack: err.stack });
+    const tickets = await SupportTicket.find().lean();
+    for (let ticket of tickets) {
+      if (ticket.userId) {
+        const user = await User.findById(ticket.userId).select('email').lean();
+        ticket.userId = user || { email: 'Unknown User' };
+      } else {
+        ticket.userId = { email: 'Unknown User' };
+      }
+    }
+    logger.info('Rendering admin/support-tickets with CSRF Token (Error: Failed to Submit Response):', { token: req.csrfToken(), sessionID: req.sessionID });
+    res.render('admin/support-tickets', {
+      user: req.user,
+      tickets,
+      error: 'Failed to submit response: ' + err.message,
+      csrfToken: req.csrfToken()
+    });
   }
 });
 
@@ -729,7 +977,15 @@ router.post('/admin/support-tickets/close/:id', isAuthenticated, isAdmin, async 
   try {
     const ticket = await SupportTicket.findById(req.params.id);
     if (!ticket) {
-      const tickets = await SupportTicket.find().populate('userId', 'email').lean();
+      const tickets = await SupportTicket.find().lean();
+      for (let ticket of tickets) {
+        if (ticket.userId) {
+          const user = await User.findById(ticket.userId).select('email').lean();
+          ticket.userId = user || { email: 'Unknown User' };
+        } else {
+          ticket.userId = { email: 'Unknown User' };
+        }
+      }
       return res.render('admin/support-tickets', {
         user: req.user,
         tickets,
@@ -741,7 +997,15 @@ router.post('/admin/support-tickets/close/:id', isAuthenticated, isAdmin, async 
     await ticket.save();
     logger.info('Support Ticket Closed:', { ticketId: ticket._id, userId: ticket.userId.toString() });
 
-    const tickets = await SupportTicket.find().populate('userId', 'email').lean();
+    const tickets = await SupportTicket.find().lean();
+    for (let ticket of tickets) {
+      if (ticket.userId) {
+        const user = await User.findById(ticket.userId).select('email').lean();
+        ticket.userId = user || { email: 'Unknown User' };
+      } else {
+        ticket.userId = { email: 'Unknown User' };
+      }
+    }
     res.render('admin/support-tickets', {
       user: req.user,
       tickets,
@@ -750,79 +1014,19 @@ router.post('/admin/support-tickets/close/:id', isAuthenticated, isAdmin, async 
     });
   } catch (err) {
     logger.error('Close Support Ticket Error:', err);
-    const tickets = await SupportTicket.find().populate('userId', 'email').lean();
+    const tickets = await SupportTicket.find().lean();
+    for (let ticket of tickets) {
+      if (ticket.userId) {
+        const user = await User.findById(ticket.userId).select('email').lean();
+        ticket.userId = user || { email: 'Unknown User' };
+      } else {
+        ticket.userId = { email: 'Unknown User' };
+      }
+    }
     res.render('admin/support-tickets', {
       user: req.user,
       tickets,
       error: 'Failed to close ticket.',
-      csrfToken: req.csrfToken()
-    });
-  }
-});
-
-// Admin Respond to Support Ticket
-router.post('/admin/support-tickets/respond/:id', isAuthenticated, isAdmin, async (req, res) => {
-  const { response } = req.body;
-  try {
-    const sanitizedResponse = sanitizeHtml(response, { allowedTags: [], allowedAttributes: {} });
-    if (!sanitizedResponse) {
-      const tickets = await SupportTicket.find().populate('userId', 'email').lean();
-      return res.render('admin/support-tickets', {
-        user: req.user,
-        tickets,
-        error: 'Response is required.',
-        csrfToken: req.csrfToken()
-      });
-    }
-
-    const ticket = await SupportTicket.findById(req.params.id).populate('userId', 'email');
-    if (!ticket) {
-      const tickets = await SupportTicket.find().populate('userId', 'email').lean();
-      return res.render('admin/support-tickets', {
-        user: req.user,
-        tickets,
-        error: 'Ticket not found.',
-        csrfToken: req.csrfToken()
-      });
-    }
-
-    ticket.response = sanitizedResponse;
-    ticket.respondedAt = new Date();
-    ticket.status = 'closed';
-    await ticket.save();
-    logger.info('Admin Responded to Support Ticket:', { ticketId: ticket._id, userId: ticket.userId._id.toString() });
-
-    // Notify user via email
-    const userEmail = ticket.userId.email;
-    const params = {
-      Source: `support@aliaszap.com`,
-      Destination: { ToAddresses: [userEmail] },
-      Message: {
-        Subject: { Data: `Support Ticket Response: ${ticket.subject}` },
-        Body: {
-          Text: {
-            Data: `Ticket ID: ${ticket._id}\nSubject: ${ticket.subject}\nAdmin Response: ${sanitizedResponse}\nResponded At: ${ticket.respondedAt.toISOString()}\n\nYou can view this ticket at: http://localhost:3000/support`
-          }
-        }
-      }
-    };
-    await ses.sendEmail(params).promise();
-    logger.info('User Notified of Support Ticket Response:', { ticketId: ticket._id, userEmail });
-
-    const tickets = await SupportTicket.find().populate('userId', 'email').lean();
-    res.render('admin/support-tickets', {
-      user: req.user,
-      tickets,
-      success: 'Response submitted and user notified.',
-      csrfToken: req.csrfToken()
-    });
-  } catch (err) {
-    logger.error('Respond to Support Ticket Error:', err);
-    const tickets = await SupportTicket.find().populate('userId', 'email').lean();
-    res.render('admin/support-tickets', {
-      user: req.user,
-      tickets,
-      error: 'Failed to submit response.',
       csrfToken: req.csrfToken()
     });
   }

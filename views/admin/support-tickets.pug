@@ -2,6 +2,7 @@ html
   head
     title Admin Support Tickets - AliasZap
     link(href='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css', rel='stylesheet')
+    script(src='https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js')
     link(href='/css/styles.css', rel='stylesheet')
   body
     nav.navbar.navbar-expand-lg.navbar-light.bg-light
@@ -33,37 +34,38 @@ html
           if success
             .alert.alert-success= success
           if tickets && tickets.length > 0
-            .table-responsive.mt-4
-              table.table.table-striped
-                thead
-                  tr
-                    th Ticket ID
-                    th User Email
-                    th Subject
-                    th Priority
-                    th Status
-                    th Created
-                    th Message
-                    th Action
-                tbody
-                  each ticket in tickets
-                    tr
-                      td= ticket._id
-                      td= ticket.userId ? ticket.userId.email : 'N/A'
-                      td= ticket.subject
-                      td= ticket.priority ? 'Yes' : 'No'
-                      td= ticket.status
-                      td= ticket.createdAt ? new Date(ticket.createdAt).toDateString() : 'N/A'
-                      td= ticket.message
-                      td
-                        if ticket.status === 'open'
-                          form(action=`/admin/support-tickets/close/${ticket._id}`, method='POST', style='display:inline')
+            .accordion.mt-4#adminSupportTicketsAccordion
+              each ticket in tickets
+                .accordion-item
+                  h2.accordion-header(id=`heading${ticket._id}`)
+                    button.accordion-button.collapsed(type='button', data-bs-toggle='collapse', data-bs-target=`#collapse${ticket._id}`, aria-expanded='false', aria-controls=`collapse${ticket._id}`)
+                      | Ticket: #{ticket.subject} (User: #{ticket.userId ? ticket.userId.email : 'N/A'}) (Status: #{ticket.status})
+                  .accordion-collapse.collapse(id=`collapse${ticket._id}`, aria-labelledby=`heading${ticket._id}`, data-bs-parent='#adminSupportTicketsAccordion')
+                    .accordion-body
+                      table.table.table-bordered
+                        thead
+                          tr
+                            th Sender
+                            th Message
+                            th Timestamp
+                        tbody
+                          each msg in ticket.messages
+                            tr
+                              td= msg.sender.charAt(0).toUpperCase() + msg.sender.slice(1)
+                              td= msg.message
+                              td= msg.timestamp ? new Date(msg.timestamp).toLocaleString() : 'N/A'
+                      if ticket.status === 'open'
+                        // Separate the forms to avoid nesting
+                        div.d-flex.align-items-center
+                          form(action=`/admin/support-tickets/respond/${ticket._id}`, method='POST', style='display:inline-block; margin-right: 5px')
                             input(type='hidden', name='_csrf', value=csrfToken)
-                            button.btn.btn-warning.btn-sm(type='submit') Close
-                          form(action=`/admin/support-tickets/respond/${ticket._id}`, method='POST', style='display:inline; margin-left: 5px')
-                            input(type='hidden', name='_csrf', value=csrfToken)
-                            .input-group
+                            .input-group.mb-3
                               input.form-control(type='text', name='response', placeholder='Respond to ticket', required)
-                              button.btn.btn-primary.btn-sm(type='submit') Respond
+                              button.btn.btn-primary(type='submit') Respond
+                          form(action=`/admin/support-tickets/close/${ticket._id}`, method='POST', style='display:inline-block')
+                            input(type='hidden', name='_csrf', value=csrfToken)
+                            button.btn.btn-warning(type='submit') Close Ticket
+                      else
+                        p.text-muted This ticket is closed.
           else
             p.text-muted No support tickets found.

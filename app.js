@@ -9,7 +9,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const winston = require('winston');
 const cron = require('node-cron');
-const routes = require('./routes/index'); // Declare routes once here
+const routes = require('./routes/index');
 const User = require('./models/User');
 const Alias = require('./models/Alias');
 require('dotenv').config();
@@ -34,18 +34,6 @@ if (process.env.NODE_ENV !== 'production') {
     format: winston.format.simple()
   }));
 }
-
-// Request logging middleware
-app.use((req, res, next) => {
-  logger.info('Request Received', {
-    method: req.method,
-    url: req.url,
-    userId: req.user ? req.user._id.toString() : 'Unauthenticated',
-    ip: req.ip,
-    timestamp: new Date().toISOString()
-  });
-  next();
-});
 
 // Middleware
 app.use(helmet({
@@ -81,7 +69,7 @@ app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (re
 });
 
 // Add /handle-email route before csurf middleware
-app.use('/handle-email', routes); // Use the same routes variable
+app.use('/handle-email', routes);
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret',
@@ -91,17 +79,102 @@ app.use(session({
 }));
 app.use(passport.initialize());
 app.use(passport.session());
-app.use(csurf());
+
+// Session logging
 app.use((req, res, next) => {
-  res.locals.csrfToken = req.csrfToken();
+  logger.info('Session and User Data:', {
+    sessionID: req.sessionID,
+    user: req.user || 'No user',
+    isAuthenticated: req.isAuthenticated(),
+    session: req.session,
+    csrfSecret: req.session.csrfSecret || 'Not set'
+  });
   next();
 });
+
+// Force session save after authentication
+app.use((req, res, next) => {
+  if (req.user && req.session) {
+    req.session.save(err => {
+      if (err) {
+        logger.error('Session Save Error:', err);
+      }
+      next();
+    });
+  } else {
+    next();
+  }
+});
+
+// Request logging middleware
+app.use((req, res, next) => {
+  logger.info('Request Received', {
+    method: req.method,
+    url: req.url,
+    userId: req.user ? req.user._id.toString() : 'Unauthenticated',
+    ip: req.ip,
+    timestamp: new Date().toISOString()
+  });
+  next();
+});
+
+// Log CSRF token in request before validation
+app.use((req, res, next) => {
+  if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
+    let token = req.body._csrf || req.headers['x-csrf-token'] || req.headers['csrf-token'];
+    // Handle case where token is an array (due to duplicate form fields)
+    if (Array.isArray(token)) {
+      token = token[0]; // Take the first token if it's an array
+      logger.warn('CSRF Token Received as Array, Using First Value:', { token: token, sessionID: req.sessionID, url: req.url, method: req.method });
+    }
+    if (token) {
+      logger.info('CSRF Token in Incoming Request:', { token: token, sessionID: req.sessionID, url: req.url, method: req.method });
+    } else {
+      logger.warn('No CSRF Token Found in Request:', { sessionID: req.sessionID, url: req.url, method: req.method });
+    }
+  }
+  next();
+});
+
+// CSRF protection
+app.use(csurf());
+app.use((req, res, next) => {
+  // Only generate CSRF token for HTML requests
+  if (req.accepts('html')) {
+    const token = req.csrfToken();
+    logger.info('CSRF Token Generated for Request:', { token: token, sessionID: req.sessionID, url: req.url });
+    res.locals.csrfToken = token;
+  } else {
+    res.locals.csrfToken = null; // Avoid overwriting for non-HTML requests
+  }
+  next();
+});
+
+// Override res.render to include CSRF token
+const originalRender = app.response.render;
+app.response.render = function (view, options, callback) {
+  const token = this.req.csrfToken();
+  logger.info('CSRF Token Generated for Render:', { token: token, sessionID: this.req.sessionID, view: view });
+  options = options || {};
+  options.csrfToken = token;
+  originalRender.call(this, view, options, callback);
+};
+
 app.use('/create-alias', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10
 }));
 app.set('view engine', 'pug');
 app.use(express.static('public'));
+
+// Prevent browser caching for dynamic pages
+app.use((req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  res.set('Surrogate-Control', 'no-store');
+  next();
+});
 
 // Passport
 passport.use(new LocalStrategy({ usernameField: 'email' }, async (email, password, done) => {
@@ -114,8 +187,10 @@ passport.serializeUser((user, done) => done(null, user._id));
 passport.deserializeUser(async (id, done) => {
   try {
     const user = await User.findById(id);
+    logger.info('Deserializing user:', { userId: id, user: user || 'Not found' });
     done(null, user);
   } catch (err) {
+    logger.error('Deserialize User Error:', err);
     done(err);
   }
 });
@@ -156,15 +231,15 @@ mongoose.connect(process.env.MONGODB_URI, { useNewUrlParser: true, useUnifiedTop
   .catch(err => logger.error('MongoDB connection error:', err));
 
 // Routes
-app.use('/', routes); // Use the same routes variable
+app.use('/', routes);
 
 // Error handling
 app.use((err, req, res, next) => {
   if (err.code === 'EBADCSRFTOKEN') {
-    logger.error('CSRF Token Error:', err);
+    logger.error('CSRF Token Error:', { message: err.message, stack: err.stack });
     res.status(403).render('error', { error: 'Invalid CSRF token. Please try again.' });
   } else {
-    logger.error('Server Error:', err.stack);
+    logger.error('Server Error:', { message: err.message, stack: err.stack });
     res.status(500).render('error', { error: 'Something went wrong!' });
   }
 });
