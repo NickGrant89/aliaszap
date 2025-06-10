@@ -680,10 +680,10 @@ router.get('/support', isAuthenticated, async (req, res) => {
   try {
     const tickets = await SupportTicket.find({ userId: req.user._id }).lean();
     logger.info('Tickets fetched for support page:', { userId: req.user._id.toString(), tickets: tickets });
-    res.render('support', { user: req.user, tickets, csrfToken: req.csrfToken() });
+    res.render('support', { user: req.user, tickets, csrfToken: req.csrfToken ? req.csrfToken() : null });
   } catch (err) {
     logger.error('Support Page Error:', { message: err.message, stack: err.stack });
-    res.render('support', { user: req.user, tickets: [], error: 'Failed to load support tickets.', csrfToken: req.csrfToken() });
+    res.render('support', { user: req.user, tickets: [], error: 'Failed to load support tickets.', csrfToken: req.csrfToken ? req.csrfToken() : null });
   }
 });
 

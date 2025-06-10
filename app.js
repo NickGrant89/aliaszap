@@ -76,7 +76,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: false } // Set to true in production
+  cookie: { secure: true, sameSite: 'lax' } // Secure for production with HTTPS
 }));
 app.use(passport.initialize());
 app.use(passport.session());
@@ -119,7 +119,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Log CSRF token in request before validation (for debugging, not enforced on /handle-email)
+// Log CSRF token in request before validation (for debugging)
 app.use((req, res, next) => {
   if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
     let token = req.body._csrf || req.headers['x-csrf-token'] || req.headers['csrf-token'];
@@ -136,27 +136,26 @@ app.use((req, res, next) => {
   next();
 });
 
-// Apply CSRF protection to specific user-facing routes
-const csrfProtection = csurf();
+// Apply CSRF protection globally, but skip validation for /handle-email
+const csrf = csurf({ ignoreMethods: ['POST', 'GET', 'PUT', 'DELETE'], skip: (req) => req.path === '/handle-email' });
+app.use(csrf);
+
+// Set CSRF token for rendering only on protected routes
 app.use((req, res, next) => {
-  if (req.path.startsWith('/admin') || req.path === '/login' || req.path === '/signup' || req.path === '/' || req.path.startsWith('/dashboard')) {
-    csrfProtection(req, res, next);
+  if (req.path.startsWith('/admin') || req.path === '/login' || req.path === '/signup' || req.path === '/' || req.path.startsWith('/dashboard') || req.path === '/support') {
     if (req.accepts('html')) {
-      const token = req.csrfToken();
-      logger.info('CSRF Token Generated for Request:', { token: token, sessionID: req.sessionID, url: req.url });
-      res.locals.csrfToken = token;
+      res.locals.csrfToken = req.csrfToken();
+      logger.info('CSRF Token Generated for Request:', { token: req.csrfToken(), sessionID: req.sessionID, url: req.url });
     }
-  } else {
-    next();
   }
+  next();
 });
 
 // Override res.render to include CSRF token for protected routes
 const originalRender = app.response.render;
 app.response.render = function (view, options, callback) {
-  if (this.req.path.startsWith('/admin') || this.req.path === '/login' || this.req.path === '/signup' || this.req.path === '/' || this.req.path.startsWith('/dashboard')) {
+  if (this.req.path.startsWith('/admin') || this.req.path === '/login' || this.req.path === '/signup' || this.req.path === '/' || this.req.path.startsWith('/dashboard') || this.req.path === '/support') {
     if (this.req.accepts('html')) {
-      // Safely check if csrfToken is a function before calling it
       const token = typeof this.req.csrfToken === 'function' ? this.req.csrfToken() : null;
       if (token) {
         logger.info('CSRF Token Generated for Render:', { token: token, sessionID: this.req.sessionID, view: view });
@@ -169,8 +168,8 @@ app.response.render = function (view, options, callback) {
 };
 
 app.use('/create-alias', rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // Increased for production
 }));
 app.set('view engine', 'pug');
 app.use(express.static('public'));
@@ -208,17 +207,11 @@ logger.info('Scheduling cron job for alias expiration');
 cron.schedule('* * * * *', async () => {
   const now = new Date();
   try {
-    const expiredAliases = await Alias.find({ 
-      expiresAt: { $lte: now, $ne: null }, 
-      active: true 
-    }).lean();
+    const expiredAliases = await Alias.find({ expiresAt: { $lte: now, $ne: null }, active: true }).lean();
     logger.info('Cron Job Running - Checking for expired aliases:', { timestamp: now.toISOString() });
     if (expiredAliases.length > 0) {
       const userIds = [...new Set(expiredAliases.map(alias => alias.userId.toString()))];
-      await Alias.updateMany(
-        { expiresAt: { $lte: now, $ne: null }, active: true },
-        { $set: { active: false } }
-      );
+      await Alias.updateMany({ expiresAt: { $lte: now, $ne: null }, active: true }, { $set: { active: false } });
       for (const userId of userIds) {
         const activeCount = await Alias.countDocuments({ userId: userId, active: true });
         await User.updateOne({ _id: userId }, { $set: { aliasCount: activeCount } });
@@ -244,13 +237,13 @@ app.use('/', routes);
 // Error handling
 app.use((err, req, res, next) => {
   if (err.code === 'EBADCSRFTOKEN') {
-    logger.error('CSRF Token Error:', { message: err.message, stack: err.stack });
-    res.status(403).render('error', { error: 'Invalid CSRF token. Please try again.' });
+    logger.error('CSRF Token Error:', { message: err.message, stack: err.stack, url: req.url });
+    res.status(403).render('error', { error: 'Invalid CSRF token. Please try again.', csrfToken: req.csrfToken ? req.csrfToken() : null });
   } else {
-    logger.error('Server Error:', { message: err.message, stack: err.stack });
-    res.status(500).render('error', { error: 'Something went wrong!' });
+    logger.error('Server Error:', { message: err.message, stack: err.stack, url: req.url });
+    res.status(500).render('error', { error: 'Something went wrong!', csrfToken: req.csrfToken ? req.csrfToken() : null });
   }
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => logger.info(`Server running on http://localhost:${PORT}`));
+app.listen(PORT, () => logger.info(`Server running on http://0.0.0.0:${PORT}`));
