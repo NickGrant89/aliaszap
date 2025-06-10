@@ -29,7 +29,12 @@ const logger = winston.createLogger({
   ]
 });
 
+// Add console transport for production
 if (process.env.NODE_ENV !== 'production') {
+  logger.add(new winston.transports.Console({
+    format: winston.format.simple()
+  }));
+} else {
   logger.add(new winston.transports.Console({
     format: winston.format.simple()
   }));
@@ -246,4 +251,14 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => logger.info(`Server running on http://0.0.0.0:${PORT}`));
+
+app.listen(PORT, () => {
+  logger.info(`Server running on http://0.0.0.0:${PORT}`);
+  console.log(`Server running on http://0.0.0.0:${PORT}`); // Fallback console log
+});
+
+app.use((req, res, next) => {
+  logger.info('Request:', { method: req.method, url: req.url, headers: req.headers });
+  console.log('Request:', { method: req.method, url: req.url }); // Fallback console log
+  next();
+});
