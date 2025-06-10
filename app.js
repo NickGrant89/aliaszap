@@ -76,7 +76,7 @@ app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret',
   resave: false,
   saveUninitialized: false,
-  cookie: { secure: true, sameSite: 'lax' } // Secure for production with HTTPS
+  cookie: { secure: false, sameSite: 'lax', maxAge: 24 * 60 * 60 * 1000 } // Secure: false for local HTTP
 }));
 app.use(passport.initialize());
 app.use(passport.session());
