@@ -1,4 +1,10 @@
 {
+    "name": "aliaszap",
+  "version": "1.0.0",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },  
     "dependencies": {
         "aws-sdk": "^2.1692.0",
         "bcryptjs": "^2.4.3",
@@ -17,5 +23,10 @@
         "sanitize-html": "^2.17.0",
         "stripe": "^12.0.0",
         "winston": "^3.17.0"
-    }
+    },
+    "engines": {
+    "node": ">=14.0.0"
+  }
 }
+
+
