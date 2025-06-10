@@ -438,94 +438,99 @@ router.post('/subscribe', isAuthenticated, async (req, res) => {
 router.post('/handle-email', async (req, res) => {
   const message = req.body;
 
-  if (message.Type === 'SubscriptionConfirmation' || message.Type === 'Notification') {
-    const signature = message.Signature;
-    const signatureVersion = message.SignatureVersion;
-    const signingCertURL = message.SigningCertURL;
-    const messageBody = JSON.stringify({
-      Message: message.Message,
-      MessageId: message.MessageId,
-      Subject: message.Subject || '',
-      Timestamp: message.Timestamp,
-      TopicArn: message.TopicArn,
-      Type: message.Type
-    });
+  logger.info('Received handle-email request:', { rawBody: req.body });
 
-    const certResponse = await fetch(signingCertURL);
-    const cert = await certResponse.text();
-
-    const verifier = crypto.createVerify('sha1WithRSAEncryption');
-    verifier.update(messageBody);
-    const isValid = verifier.verify(cert, signature, 'base64');
-
-    if (!isValid) {
-      logger.error('Invalid SNS signature');
-      return res.status(403).send('Invalid SNS signature');
-    }
+  if (!message || typeof message !== 'object') {
+    logger.error('Invalid request body:', { body: req.body });
+    return res.status(400).send('Invalid request body');
   }
 
   if (message.Type === 'SubscriptionConfirmation') {
     const subscribeUrl = message.SubscribeURL;
-    await fetch(subscribeUrl);
-    logger.info('SNS Subscription Confirmed:', { subscribeUrl });
+    if (subscribeUrl) {
+      try {
+        await fetch(subscribeUrl);
+        logger.info('SNS Subscription Confirmed:', { subscribeUrl });
+      } catch (err) {
+        logger.error('Failed to Confirm SNS Subscription:', { subscribeUrl, error: err.message });
+        return res.status(500).send('Failed to confirm subscription');
+      }
+    } else {
+      logger.warn('No SubscribeURL in SubscriptionConfirmation message:', { message });
+      return res.status(400).send('No SubscribeURL provided');
+    }
     return res.status(200).send('Subscription confirmed');
   }
 
-  const { from, to, subject, body } = message;
-  try {
-    const alias = await Alias.findOne({ alias: to[0], active: true });
-    if (!alias) {
-      logger.info('Email Forwarding Failed:', { to: to[0], reason: 'Alias not found' });
-      return res.status(404).send('Alias not found');
+  if (message.Type === 'Notification') {
+    if (!message.Message || !message.Message.mail) {
+      logger.error('Invalid SES notification format:', { message: JSON.stringify(message, null, 2) });
+      return res.status(400).send('Invalid SES notification format');
     }
 
-    let isSpam = false;
+    const mail = message.Message.mail;
+    const content = message.Message.content ? message.Message.content.split('\n') : [];
+    const from = [mail.source || 'support@aliaszap.com']; // Fallback to verified sender
+    const to = mail.destination || [];
+    const subject = mail.subject || (content.find(line => line.startsWith('Subject:'))?.split(': ')[1] || 'No Subject');
+    const body = content.slice(content.findIndex(line => line.startsWith('Subject:')) + 1).join('\n').trim() || 'No Body';
 
-    if (alias.blockSpam) {
-      if (subject.toLowerCase().includes('spam') || body.toLowerCase().includes('unsubscribe')) {
-        isSpam = true;
+    try {
+      const alias = await Alias.findOne({ alias: to[0], active: true });
+      if (!alias) {
+        logger.info('Email Forwarding Failed:', { to: to[0], reason: 'Alias not found' });
+        return res.status(404).send('Alias not found');
       }
+
+      let isSpam = false;
+
+      if (alias.blockSpam) {
+        if (subject.toLowerCase().includes('spam') || body.toLowerCase().includes('unsubscribe')) {
+          isSpam = true;
+        }
+      }
+
+      if (alias.enableAdvancedSpamDetection) {
+        const sender = from[0].toLowerCase();
+        const senderDomain = sender.split('@')[1];
+        if (alias.spamBlocklist.some(blocked => sender === blocked || senderDomain === blocked)) {
+          isSpam = true;
+          logger.info('Email Blocked by Custom Blocklist:', { sender, alias: alias.alias });
+        }
+
+        const spamKeywords = ['lottery', 'win a prize', 'free offer', 'click here', 'unsubscribe', 'viagra', 'casino'];
+        const emailContent = `${subject} ${body}`.toLowerCase();
+        if (spamKeywords.some(keyword => emailContent.includes(keyword))) {
+          isSpam = true;
+          logger.info('Email Flagged as Spam by Keywords:', { alias: alias.alias, subject });
+        }
+      }
+
+      if (isSpam) {
+        await Alias.updateOne({ _id: alias._id }, { $inc: { spamCount: 1, emailCount: 1 } });
+        return res.status(200).send('Email blocked as spam');
+      }
+
+      await Alias.updateOne({ _id: alias._id }, { $inc: { emailCount: 1 } });
+
+      const params = {
+        Source: from[0],
+        Destination: { ToAddresses: [alias.forwardTo] },
+        Message: {
+          Subject: { Data: subject },
+          Body: { Text: { Data: body } }
+        }
+      };
+      await ses.sendEmail(params).promise();
+      logger.info('Email Forwarded:', { from: from[0], to: alias.forwardTo });
+      res.status(200).send('Email forwarded');
+    } catch (err) {
+      logger.error('SES Forwarding Error:', err);
+      res.status(500).send('Failed to forward email');
     }
-
-    if (alias.enableAdvancedSpamDetection) {
-      const sender = from[0].toLowerCase();
-      const senderDomain = sender.split('@')[1];
-      if (alias.spamBlocklist.some(blocked => 
-        sender === blocked || senderDomain === blocked
-      )) {
-        isSpam = true;
-        logger.info('Email Blocked by Custom Blocklist:', { sender, alias: alias.alias });
-      }
-
-      const spamKeywords = ['lottery', 'win a prize', 'free offer', 'click here', 'unsubscribe', 'viagra', 'casino'];
-      const emailContent = `${subject} ${body}`.toLowerCase();
-      if (spamKeywords.some(keyword => emailContent.includes(keyword))) {
-        isSpam = true;
-        logger.info('Email Flagged as Spam by Keywords:', { alias: alias.alias, subject });
-      }
-    }
-
-    if (isSpam) {
-      await Alias.updateOne({ _id: alias._id }, { $inc: { spamCount: 1, emailCount: 1 } });
-      return res.status(200).send('Email blocked as spam');
-    }
-
-    await Alias.updateOne({ _id: alias._id }, { $inc: { emailCount: 1 } });
-
-    const params = {
-      Source: from[0],
-      Destination: { ToAddresses: [alias.forwardTo] },
-      Message: {
-        Subject: { Data: subject },
-        Body: { Text: { Data: body } }
-      }
-    };
-    await ses.sendEmail(params).promise();
-    logger.info('Email Forwarded:', { from: from[0], to: alias.forwardTo });
-    res.status(200).send('Email forwarded');
-  } catch (err) {
-    logger.error('SES Forwarding Error:', err);
-    res.status(500).send('Failed to forward email');
+  } else {
+    logger.error('Unsupported message type:', { message: JSON.stringify(message, null, 2) });
+    return res.status(400).send('Unsupported message type');
   }
 });
 

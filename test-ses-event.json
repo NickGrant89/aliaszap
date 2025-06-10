@@ -1,0 +1,13 @@
+{
+    "Type": "Notification",
+    "Message": {
+      "mail": {
+        "source": "support@aliaszap.com",
+        "destination": ["mail13@aliaszap.com"],
+        "subject": "Test SES Forwarding",
+        "messageId": "test-message-id-123",
+        "timestamp": "2025-06-10T12:40:00.000Z"
+      },
+      "content": "From: sender@example.com\nTo: mail13@aliaszap.com\nSubject: Test SES Forwarding\n\nThis is a test email to verify SES forwarding."
+    }
+  }

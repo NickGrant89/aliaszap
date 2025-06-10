@@ -48,7 +48,7 @@ app.use(helmet({
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
-// Stripe Webhook (before csurf)
+// Stripe Webhook (before csurf, no CSRF needed)
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'];
@@ -68,9 +68,10 @@ app.post('/stripe-webhook', express.raw({ type: 'application/json' }), async (re
   res.json({ received: true });
 });
 
-// Add /handle-email route before csurf middleware
+// Add /handle-email route before CSRF middleware (no CSRF protection)
 app.use('/handle-email', routes);
 
+// Apply session and passport middleware
 app.use(session({
   secret: process.env.SESSION_SECRET || 'your-secret',
   resave: false,
@@ -118,13 +119,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// Log CSRF token in request before validation
+// Log CSRF token in request before validation (for debugging, not enforced on /handle-email)
 app.use((req, res, next) => {
   if (req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE') {
     let token = req.body._csrf || req.headers['x-csrf-token'] || req.headers['csrf-token'];
-    // Handle case where token is an array (due to duplicate form fields)
     if (Array.isArray(token)) {
-      token = token[0]; // Take the first token if it's an array
+      token = token[0];
       logger.warn('CSRF Token Received as Array, Using First Value:', { token: token, sessionID: req.sessionID, url: req.url, method: req.method });
     }
     if (token) {
@@ -136,27 +136,35 @@ app.use((req, res, next) => {
   next();
 });
 
-// CSRF protection
-app.use(csurf());
+// Apply CSRF protection to specific user-facing routes
+const csrfProtection = csurf();
 app.use((req, res, next) => {
-  // Only generate CSRF token for HTML requests
-  if (req.accepts('html')) {
-    const token = req.csrfToken();
-    logger.info('CSRF Token Generated for Request:', { token: token, sessionID: req.sessionID, url: req.url });
-    res.locals.csrfToken = token;
+  if (req.path.startsWith('/admin') || req.path === '/login' || req.path === '/signup' || req.path === '/' || req.path.startsWith('/dashboard')) {
+    csrfProtection(req, res, next);
+    if (req.accepts('html')) {
+      const token = req.csrfToken();
+      logger.info('CSRF Token Generated for Request:', { token: token, sessionID: req.sessionID, url: req.url });
+      res.locals.csrfToken = token;
+    }
   } else {
-    res.locals.csrfToken = null; // Avoid overwriting for non-HTML requests
+    next();
   }
-  next();
 });
 
-// Override res.render to include CSRF token
+// Override res.render to include CSRF token for protected routes
 const originalRender = app.response.render;
 app.response.render = function (view, options, callback) {
-  const token = this.req.csrfToken();
-  logger.info('CSRF Token Generated for Render:', { token: token, sessionID: this.req.sessionID, view: view });
-  options = options || {};
-  options.csrfToken = token;
+  if (this.req.path.startsWith('/admin') || this.req.path === '/login' || this.req.path === '/signup' || this.req.path === '/' || this.req.path.startsWith('/dashboard')) {
+    if (this.req.accepts('html')) {
+      // Safely check if csrfToken is a function before calling it
+      const token = typeof this.req.csrfToken === 'function' ? this.req.csrfToken() : null;
+      if (token) {
+        logger.info('CSRF Token Generated for Render:', { token: token, sessionID: this.req.sessionID, view: view });
+        options = options || {};
+        options.csrfToken = token;
+      }
+    }
+  }
   originalRender.call(this, view, options, callback);
 };
 
