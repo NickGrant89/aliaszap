@@ -30,3 +30,30 @@ body.dark-mode .form-control:focus {
   border-color: #777;
   box-shadow: 0 0 0 0.2rem rgba(119, 119, 119, 0.25);
 }
+/* public/stylesheets/style.css */
+#hero {
+  min-height: 400px;
+  display: flex;
+  align-items: center;
+}
+.card {
+  transition: transform 0.2s;
+}
+.card:hover {
+  transform: scale(1.05);
+}
+
+/* public/stylesheets/style.css */
+@media (max-width: 991px) {
+  .navbar-nav {
+    margin-top: 1rem;
+  }
+  .navbar-collapse {
+    background-color: #f8f9fa;
+    padding: 1rem;
+  }
+}
+.navbar-toggler {
+  border: none;
+  padding: 0.5rem 1rem;
+}

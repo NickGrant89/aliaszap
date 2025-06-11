@@ -1,0 +1,41 @@
+extend layout
+
+block content
+  // Hero Section
+  section#hero.bg-light.py-5.text-center(style='background-image: url("/images/hero-bg.jpg"); background-size: cover; background-position: center;')
+    .container.py-5
+      h1.display-3.text-white Welcome to AliasZap
+      p.lead.text-white Protect your inbox with disposable email aliases.
+      a.btn.btn-primary.btn-lg.mt-3(href='/signup') Get Started Free
+      if error
+        .alert.alert-danger.mt-3 #{error}
+
+  // Features Section
+  section#features.py-5
+    .container
+      h2.text-center.mb-4 Why Choose AliasZap?
+      .row
+        .col-md-4
+          .card.h-100.border-0
+            .card-body.text-center
+              img(src='/images/feature-icon-privacy.png' alt='Privacy Icon' class='mb-3' style='max-width: 80px;')
+              h5.card-title Privacy First
+              p.card-text Create aliases to hide your real email and reduce spam.
+        .col-md-4
+          .card.h-100.border-0
+            .card-body.text-center
+              img(src='/images/feature-icon-simplicity.png' alt='Simplicity Icon' class='mb-3' style='max-width: 80px;')
+              h5.card-title Easy to Use
+              p.card-text Set up aliases in seconds with our simple interface.
+        .col-md-4
+          .card.h-100.border-0
+            .card-body.text-center
+              img(src='/images/feature-icon-protection.png' alt='Protection Icon' class='mb-3' style='max-width: 80px;')
+              h5.card-title Spam Protection
+              p.card-text Advanced filtering to block unwanted emails.
+
+  // Call to Action
+  section#cta.bg-primary.py-5.text-white.text-center
+    .container
+      h2.display-5 Ready to Protect Your Inbox?
+      a.btn.btn-light.btn-lg.mt-3(href='/signup') Sign Up Now

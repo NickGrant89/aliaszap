@@ -53,10 +53,14 @@ const isAdmin = (req, res, next) => {
   res.redirect('/support');
 };
 
-// Home
+router.get('/', (req, res) => {
+  res.render('landing', { user: req.user, csrfToken: req.csrfToken ? req.csrfToken() : null });
+});
+
+/* // Home
 router.get('/', (req, res) => {
   res.render('index', { user: req.user });
-});
+}); */
 
 // Login
 router.get('/login', (req, res) => {
